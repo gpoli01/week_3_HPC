@@ -1,0 +1,121 @@
+---
+title: "Week3_Greeshma_poli_HPC"
+author: "Greeshma Poli"
+date: "2025-02-07"
+output: html_document
+---
+
+```{r}
+# Load necessary libraries
+library(readxl)
+library(dplyr)
+library(microbenchmark)
+```
+
+
+```{r}
+getwd()
+```
+
+```{r}
+setwd("C:/Users/Lenovo/Documents")
+```
+
+
+```{r}
+# Read the data
+df <- read_excel("clinics.xls")
+print(head(df))
+
+```
+
+```{r}
+# Check column types and convert to numeric
+df <- df %>%
+  mutate(
+    locLat = as.numeric(locLat),
+    locLong = as.numeric(locLong)
+  )
+
+# Print structure to verify column types
+str(df)
+
+# Define Haversine function
+earth_radius <- 3959 # Miles
+
+haversine <- function(lat1, lon1, lat2, lon2) {
+  # Ensure inputs are numeric
+  lat1 <- as.numeric(lat1)
+  lon1 <- as.numeric(lon1)
+  lat2 <- as.numeric(lat2)
+  lon2 <- as.numeric(lon2)
+  
+  # Convert degrees to radians
+  lat1 <- lat1 * pi / 180
+  lon1 <- lon1 * pi / 180
+  lat2 <- lat2 * pi / 180
+  lon2 <- lon2 * pi / 180
+  
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  a <- sin(dlat/2)^2 + cos(lat1) * cos(lat2) * sin(dlon/2)^2
+  c <- 2 * asin(sqrt(a))
+  return(earth_radius * c)
+}
+```
+
+```{r}
+# Approach 1: For-loop
+# Calculates distance for each row using a loop.
+
+distance_for_loop <- function(df) {
+  distances <- numeric(nrow(df))
+  # Loop through rows and compute distance
+  for (i in 1:nrow(df)) {
+    distances[i] <- haversine(40.671, -73.985, df$locLat[i], df$locLong[i])
+  }
+  # Return distances
+  return(distances)
+}
+```
+
+
+
+```{r}
+# Approach 2: Using apply()
+ #Calculates distance for each row using apply().
+distance_apply <- function(df) {
+  return(apply(df, 1, function(row) haversine(40.671, -73.985, row["locLat"], row["locLong"])))
+}
+
+```
+
+
+```{r}
+
+# Approach 3: Vectorized approach
+# Calculates distance using vectorized operations.
+distance_vectorized <- function(df) {
+  return(haversine(40.671, -73.985, df$locLat, df$locLong))
+}
+
+```
+
+```{r}
+# Profile the three approaches
+# Uses microbenchmark to compare execution times.
+benchmark_results <- microbenchmark(
+  for_loop = distance_for_loop(df),
+  apply_func = distance_apply(df),
+  vectorized = distance_vectorized(df),
+  times = 10
+)
+```
+
+
+```{r}
+# Print benchmark results
+print(benchmark_results)
+```
+
+
