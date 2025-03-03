@@ -1,0 +1,134 @@
+---
+title: "week6 Greeshma_poli"
+author: "Greeshma Poli"
+date: "2025-03-03"
+output: html_document
+---
+
+
+```{r}
+library(data.table)
+library(geosphere)
+library(GA)
+library(purrr)
+library(sf)
+```
+
+
+```{r}
+## Load the population data
+pop.data <- data.table::fread("Mo_pop_Sim.csv")
+str(pop.data)
+frac <- 0.0001
+small.data <- pop.data[sample(1:nrow(pop.data),
+                               size = round(nrow(pop.data) * frac),
+                               replace = F), ## extract a sample of randomlychosen 1% rows
+                        ]  ## and choose all columns
+```
+
+
+```{r}
+## Load the FQHC data
+data_path <- 'MO_2018_Federally_Qualified_Health_Center_Locations'
+fqhc.data <- data.table(as.data.frame(readOGR(data_path,
+                     'MO_2018_Federally_Qualified_Health_Center_Locations')))
+```
+
+```{r}
+# Function to compute average distance from all residences
+calculate_avg_distance <- function(fqhc_lat, fqhc_long, residents) {
+  distances <- distHaversine(matrix(c(residents$long, residents$lat), ncol = 2),
+                             c(fqhc_long, fqhc_lat))
+  return(mean(distances))  # Return average distance
+}
+```
+
+
+
+
+```{r}
+# Calculate the average distance from each FQHC to the population sample
+fqhc.data$avg_distance <- mapply(calculate_avg_distance, fqhc.data$Latitude, fqhc.data$Longitude, MoreArgs = list(residents = small.data))
+```
+
+```{r}
+# Select the top 8 FQHC locations with the shortest average distance to residents
+closest_fqhc <- fqhc.data[order(fqhc.data$avg_distance), ][1:8, ]
+```
+
+
+```{r}
+# Display the selected FQHC locations
+print(closest_fqhc)
+
+```
+
+The code calculates the average distance from each Federally Qualified Health Center (FQHC) to a sample population. It then selects the top 8 FQHCs with the shortest average distances. The result shows that all selected centers are from "Community Health Center of Central Missouri," except for two others: Central Ozarks Medical Center and Katy Trail Community Health. These centers are the closest to the population sample, indicating that they should be prioritized for mental health services. The output includes 14 columns, with the key ones being the unique OBJECTID and the Group_Name of each center.
+
+
+
+```{r}
+# Function to count population within 30-mile radius
+count_population_within_radius <- function(fqhc_lat, fqhc_long, residents) {
+  distances <- distHaversine(matrix(c(residents$long, residents$lat), ncol = 2),
+                             c(fqhc_long, fqhc_lat))
+  return(sum(distances <= 48280))  # Count residents within 30-mile range
+}
+```
+
+```{r}
+# Compute population density for each FQHC
+fqhc.data$population_within_radius <- mapply(count_population_within_radius, fqhc.data$Latitude, fqhc.data$Longitude, MoreArgs = list(residents = small.data))
+```
+
+```{r}
+# Select the top 8 FQHCs with the highest population coverage
+high_density_fqhc <- fqhc.data[order(-fqhc.data$population_within_radius), ][1:8, ]
+print(high_density_fqhc)
+```
+The code defines a function to calculate the population within a 30-mile radius of each Federally Qualified Health Center (FQHC). It then computes the number of residents within that radius for each FQHC and selects the top 8 centers with the highest population coverage. The result shows a list of FQHCs such as COMTREA, Compass Health, Betty Jean Kerr People's Health Center, and Family Care Health Centers, with their respective `OBJECTID` and `Group_Name`. These FQHCs serve the highest number of residents within a 30-mile radius and should be prioritized for mental health services based on population density.
+
+
+```{r}
+# Fitness function for GA: maximize population coverage
+evaluate_fitness <- function(selected_indices) {
+  chosen_fqhcs <- fqhc.data[selected_indices, ]
+  total_coverage <- sum(sapply(1:nrow(chosen_fqhcs), function(i) 
+    count_population_within_radius(chosen_fqhcs$Latitude[i], chosen_fqhcs$Longitude[i], small.data)))  # Use small.data instead of population_sample
+  return(total_coverage)
+}
+```
+
+```{r}
+# Run Genetic Algorithm
+ga_optimization <- ga(
+  type = "permutation",
+  fitness = function(indices) evaluate_fitness(indices),
+  lower = 1,
+  upper = nrow(fqhc.data),
+  popSize = 50,
+  maxiter = 100,
+  run = 10,
+  parallel = TRUE,
+  pmutation = 0.2,
+  names = fqhc.data$Facility
+)
+```
+The GA runs with a population size of 50 and 100 iterations. For each iteration, both the "Mean" and "Best" fitness values remain constant at 9554. This indicates that the algorithm converges early and does not explore the solution space further. The lack of variation suggests a potentially too-small mutation rate (0.2) or limited search space. Since the fitness value doesn’t change, the algorithm appears stuck at a local optimum. To improve diversity in solutions, consider increasing the mutation rate, exploring more iterations, or adjusting the fitness function.
+
+
+```{r}
+# Retrieve best-selected FQHCs
+optimal_indices <- ga_optimization@solution[1, ]
+optimal_fqhcs <- fqhc.data[optimal_indices, ]
+```
+
+
+```{r}
+# Display final selected facilities
+print(optimal_fqhcs)
+```
+
+The selected FQHCs represent the 8 facilities that were optimized through the Genetic Algorithm based on the chosen fitness criteria, which could be a combination of factors like distance and population density. These 8 facilities—Northeast Missouri Health Council, Family Health Center, Your Community Health Center, Jordan Valley Community Health Center, Betty Jean Kerr People's Health Center, Clarity Healthcare, Compass Health, and Family Care Health Centers—are considered the most strategically positioned to meet the healthcare needs of the population within the specified criteria. The facilities selected likely balance accessibility, population coverage, and other relevant factors, ensuring that services are provided efficiently and effectively to underserved regions or densely populated areas.
+
+The better approach depends on the specific goals of the healthcare optimization task. If the priority is ensuring that residents have easy access to healthcare services, especially in underserved or rural areas, the **average distance approach** is more effective as it minimizes the distance between FQHCs and residents. However, if the goal is to maximize the number of people served by FQHCs, particularly in densely populated areas, the **population density approach** is preferable, as it focuses on serving areas with higher populations. In practice, a balanced hybrid approach that considers both proximity and population coverage could offer the most optimal solution, adjusting the importance of each factor based on the desired outcomes.
