@@ -1,0 +1,163 @@
+---
+title: "week_11_greeshma_file"
+author: "Greeshma Poli
+date: "2025-05-02"
+output: html_document
+---
+
+
+```{r}
+#Import necessary libraries
+library(knitr)
+library(mlbench)
+library(purrr)
+library(tibble)
+library(dplyr)
+```
+
+
+```{r}
+# Load the PimaIndiansDiabetes2 dataset 
+
+data("PimaIndiansDiabetes2")
+ds <- na.omit(as.data.frame(PimaIndiansDiabetes2))
+
+# Fit logistic model to get coefficients
+logmodel <- glm(diabetes ~ ., data = ds, family = "binomial")
+cfs <- coefficients(logmodel)
+prednames <- names(ds)[names(ds) != "diabetes"]
+```
+
+
+```{r}
+# Define a function to generate synthetic data of size 'sz'
+generate_data <- function(sz) {
+  prednames_unique <- unique(prednames) # # Ensure predictor names are unique to avoid duplicate column issues
+ ## Generate a data frame with each predictor sampled with replacement 
+  dfdata <- map_dfc(prednames_unique, ~ sample(ds[[.x]], size = sz, replace = TRUE)) %>%
+    set_names(prednames_unique)
+  
+  # Align coefficients with predictor columns 
+  aligned_cfs <- cfs[1 + match(prednames, prednames_unique)]
+  # Calculate the logit (linear predictor) using the intercept and predictors
+  logit <- cfs[1] + reduce(map2(aligned_cfs, dfdata[prednames], `*`), `+`)
+  
+  probs <- 1 / (1 + exp(-logit))
+  dfdata$outcome <- as.factor(ifelse(probs > 0.5, 1, 0))
+   # Return the generated dataset with predictors and outcome
+  return(dfdata)
+}
+
+
+
+```
+
+
+
+```{r}
+# Create the datasets directory if it doesn't exist
+if (!dir.exists("datasets")) dir.create("datasets")
+
+# Sizes of datasets to generate
+sizes <- c(100, 1000, 10000, 100000, 1000000, 10000000)
+
+# Generate and save datasets
+walk(sizes, function(sz) {
+  df <- generate_data(sz)
+  filename <- paste0("datasets/generated_data_", sz, ".csv")
+  write.csv(df, filename, row.names = FALSE)
+  message("Saved: ", filename)
+})
+
+```
+
+```{r}
+
+# Load xgboost library
+library(xgboost)
+
+# Initialize an empty data frame to store results
+results_direct <- data.frame()
+# Create the file path for the dataset
+for (sz in sizes) {
+  file_path <- paste0("datasets/generated_data_", sz, ".csv")
+  if (!file.exists(file_path)) next
+
+  df <- read.csv(file_path)
+ # Convert the outcome column to numeric labels
+  label <- as.numeric(as.character(df$outcome))
+  df$outcome <- NULL
+  mat <- as.matrix(df)
+ # Create DMatrix for xgboost
+  dtrain <- xgb.DMatrix(data = mat, label = label)
+ # Run xgboost cross-validation with 5 folds and 50 rounds
+  start_time <- Sys.time()
+  model <- xgb.cv(data = dtrain, nrounds = 50, nfold = 5, metrics = "error", verbose = 0)
+  end_time <- Sys.time()
+# Calculate time taken in seconds
+  acc <- 1 - min(model$evaluation_log$test_error_mean)
+  duration <- round(difftime(end_time, start_time, units = "secs"), 2)
+ # Save results into the dataframe
+  results_direct <- rbind(results_direct,
+                          data.frame(Method = "R xgboost() direct CV",
+                                     Dataset_Size = sz,
+                                     Accuracy = round(acc, 4),
+                                     Time_Sec = duration))
+}
+```
+
+
+
+```{r}
+#load require library
+library(caret)
+results_caret <- data.frame()
+# Loop through each dataset size, read the dataset and convert the outcome to factor (required for caret)
+for (sz in sizes) {
+  file_path <- paste0("datasets/generated_data_", sz, ".csv")
+  if (!file.exists(file_path)) next
+
+  df <- read.csv(file_path)
+  df$outcome <- as.factor(df$outcome)
+ # Prepare cross-validation setup and hyperparameter grid for training
+  start_time <- Sys.time()
+
+  ctrl <- trainControl(method = "cv", number = 5)
+
+  tune_grid <- expand.grid(
+    nrounds = 50,
+    max_depth = 6,
+    eta = 0.3,
+    gamma = 0,
+    colsample_bytree = 1,
+    min_child_weight = 1,
+    subsample = 1
+  )
+# Train the xgboost model using caret with 5-fold cross-validation and record the start and end time
+  model <- train(outcome ~ ., data = df,
+                 method = "xgbTree",
+                 trControl = ctrl,
+                 tuneGrid = tune_grid,
+                 verbose = 0)
+
+  end_time <- Sys.time()
+# After training, calculate the highest accuracy achieved and time taken
+  acc <- max(model$results$Accuracy)
+  duration <- round(difftime(end_time, start_time, units = "secs"), 2)
+# Store the method, dataset size, accuracy, and time taken into the results dataframe for later analysis
+  results_caret <- rbind(results_caret,
+                         data.frame(Method = "R caret xgboost() 5-fold CV",
+                                    Dataset_Size = sz,
+                                    Accuracy = round(acc, 4),
+                                    Time_Sec = duration))
+}
+```
+
+
+```{r}
+#print the results
+results_all <- rbind(results_direct, results_caret)
+kable(results_all)
+
+```
+
